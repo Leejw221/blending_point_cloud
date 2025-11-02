@@ -1,0 +1,7 @@
+# Ignore data and result files
+/data/
+/result/
+
+# Ignore python cache
+__pycache__/
+*.pyc
