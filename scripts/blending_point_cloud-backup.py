@@ -94,20 +94,20 @@ def transform_point_cloud(points, T):
 
 def average_by_voxel(femto_points, d405_points, voxel_size=0.005):
     """
-    Voxel-based blending with SHARP non-overlap regions
+    Average points in the same voxel with FIXED 3:7 weighting (optimized vectorized)
 
-    Strategy:
-    - Overlap voxels ONLY: Voxel averaging + Femto 30% + D405 70% blending
-    - Femto only: Original Femto points (NO voxel averaging, SHARP)
-    - D405 only: Original D405 points (NO voxel averaging, SHARP)
+    Weighting strategy:
+    - Overlap voxels: Femto 30% + D405 70% (D405 prioritized in close range)
+    - Femto only: Femto 100%
+    - D405 only: D405 100%
 
     Args:
         femto_points: (N, 6) array [X, Y, Z, R, G, B] in base frame
         d405_points: (M, 6) array [X, Y, Z, R, G, B] in base frame
-        voxel_size: voxel size in meters (default: 5mm, RISE compatible)
+        voxel_size: voxel size in meters (default: 10mm, RISE compatible)
 
     Returns:
-        blended_points: (K, 6) array of blended point cloud
+        averaged_points: (K, 6) array of averaged point cloud
     """
     if len(femto_points) == 0:
         return d405_points
@@ -127,68 +127,64 @@ def average_by_voxel(femto_points, d405_points, voxel_size=0.005):
     femto_voxel_ids = quantize_points(femto_points)
     d405_voxel_ids = quantize_points(d405_points)
 
-    # Get unique voxel IDs
-    femto_unique = np.unique(femto_voxel_ids)
-    d405_unique = np.unique(d405_voxel_ids)
+    # Get unique voxel IDs and inverse indices
+    femto_unique, femto_inverse = np.unique(femto_voxel_ids, return_inverse=True)
+    d405_unique, d405_inverse = np.unique(d405_voxel_ids, return_inverse=True)
+
+    # Compute per-voxel averages using np.add.at (C-level fast operation)
+    femto_sums = np.zeros((len(femto_unique), 6), dtype=np.float64)
+    femto_counts = np.zeros(len(femto_unique), dtype=np.int32)
+    np.add.at(femto_sums, femto_inverse, femto_points)
+    np.add.at(femto_counts, femto_inverse, 1)
+    femto_avgs = femto_sums / femto_counts[:, np.newaxis]
+
+    d405_sums = np.zeros((len(d405_unique), 6), dtype=np.float64)
+    d405_counts = np.zeros(len(d405_unique), dtype=np.int32)
+    np.add.at(d405_sums, d405_inverse, d405_points)
+    np.add.at(d405_counts, d405_inverse, 1)
+    d405_avgs = d405_sums / d405_counts[:, np.newaxis]
 
     # Find overlap and non-overlap voxels using set operations
     femto_set = set(femto_unique)
     d405_set = set(d405_unique)
     overlap_ids = femto_set & d405_set
+    femto_only_ids = femto_set - d405_set
+    d405_only_ids = d405_set - femto_set
 
     # Build result list
     result_list = []
 
-    # 1. Add Femto-only points (ORIGINAL, NO voxel averaging)
-    if len(femto_set - d405_set) > 0:
-        femto_only_mask = ~np.isin(femto_voxel_ids, list(overlap_ids))
-        result_list.append(femto_points[femto_only_mask])
+    # Add Femto-only voxels
+    if len(femto_only_ids) > 0:
+        femto_only_mask = np.isin(femto_unique, list(femto_only_ids))
+        result_list.append(femto_avgs[femto_only_mask])
 
-    # 2. Add D405-only points (ORIGINAL, NO voxel averaging)
-    if len(d405_set - femto_set) > 0:
-        d405_only_mask = ~np.isin(d405_voxel_ids, list(overlap_ids))
-        result_list.append(d405_points[d405_only_mask])
+    # Add D405-only voxels
+    if len(d405_only_ids) > 0:
+        d405_only_mask = np.isin(d405_unique, list(d405_only_ids))
+        result_list.append(d405_avgs[d405_only_mask])
 
-    # 3. Process OVERLAP voxels ONLY with voxel averaging + 3:7 weighting
+    # Process overlap voxels with FIXED 7:3 weighting
     if len(overlap_ids) > 0:
         overlap_list = list(overlap_ids)
+        femto_overlap_mask = np.isin(femto_unique, overlap_list)
+        d405_overlap_mask = np.isin(d405_unique, overlap_list)
 
-        # Get points in overlap voxels
-        femto_overlap_mask = np.isin(femto_voxel_ids, overlap_list)
-        d405_overlap_mask = np.isin(d405_voxel_ids, overlap_list)
+        femto_overlap_avgs = femto_avgs[femto_overlap_mask]
+        d405_overlap_avgs = d405_avgs[d405_overlap_mask]
 
-        femto_overlap_points = femto_points[femto_overlap_mask]
-        d405_overlap_points = d405_points[d405_overlap_mask]
+        # Sort to ensure alignment between femto and d405
+        femto_overlap_ids = femto_unique[femto_overlap_mask]
+        d405_overlap_ids = d405_unique[d405_overlap_mask]
 
-        femto_overlap_voxel_ids = femto_voxel_ids[femto_overlap_mask]
-        d405_overlap_voxel_ids = d405_voxel_ids[d405_overlap_mask]
+        femto_sort_idx = np.argsort(femto_overlap_ids)
+        d405_sort_idx = np.argsort(d405_overlap_ids)
 
-        # Get unique overlap voxel IDs with inverse indices
-        femto_overlap_unique, femto_overlap_inverse = np.unique(femto_overlap_voxel_ids, return_inverse=True)
-        d405_overlap_unique, d405_overlap_inverse = np.unique(d405_overlap_voxel_ids, return_inverse=True)
+        femto_overlap_avgs = femto_overlap_avgs[femto_sort_idx]
+        d405_overlap_avgs = d405_overlap_avgs[d405_sort_idx]
 
-        # Compute per-voxel averages for overlap region ONLY
-        femto_overlap_sums = np.zeros((len(femto_overlap_unique), 6), dtype=np.float64)
-        femto_overlap_counts = np.zeros(len(femto_overlap_unique), dtype=np.int32)
-        np.add.at(femto_overlap_sums, femto_overlap_inverse, femto_overlap_points)
-        np.add.at(femto_overlap_counts, femto_overlap_inverse, 1)
-        femto_overlap_avgs = femto_overlap_sums / femto_overlap_counts[:, np.newaxis]
-
-        d405_overlap_sums = np.zeros((len(d405_overlap_unique), 6), dtype=np.float64)
-        d405_overlap_counts = np.zeros(len(d405_overlap_unique), dtype=np.int32)
-        np.add.at(d405_overlap_sums, d405_overlap_inverse, d405_overlap_points)
-        np.add.at(d405_overlap_counts, d405_overlap_inverse, 1)
-        d405_overlap_avgs = d405_overlap_sums / d405_overlap_counts[:, np.newaxis]
-
-        # Sort to ensure alignment
-        femto_sort_idx = np.argsort(femto_overlap_unique)
-        d405_sort_idx = np.argsort(d405_overlap_unique)
-
-        femto_overlap_avgs_sorted = femto_overlap_avgs[femto_sort_idx]
-        d405_overlap_avgs_sorted = d405_overlap_avgs[d405_sort_idx]
-
-        # Fixed 3:7 weighted average (D405 prioritized)
-        weighted_avgs = 0.3 * femto_overlap_avgs_sorted + 0.7 * d405_overlap_avgs_sorted
+        # Fixed 3:7 weighted average (D405 prioritized, vectorized)
+        weighted_avgs = 0.3 * femto_overlap_avgs + 0.7 * d405_overlap_avgs
         result_list.append(weighted_avgs)
 
     if len(result_list) == 0:

@@ -86,11 +86,17 @@ class Config:
     # Axis remapping: D405_X=-EE_Y, D405_Y=EE_X, D405_Z=EE_Z
     # Then rotate -45° around D405's Y-axis (Z-axis points forward/down)
     END_EFFECTOR_TO_D405_MOUNT = np.array([
-        [  0.000000, -0.707107,   0.707107, -0.097522],  # -97.522mm
-        [  1.000000,  0.000000,   0.000000, -0.000063],  # -15.062mm
-        [  0.000000,  0.707107,   0.707107,  0.015062],  # +0.063mm
+        [  0.000000, -0.788010,   0.615661, -0.037522],  # -97.522mm
+        [  1.000000,  0.000000,   0.000000,  0.020063],  # -15.062mm
+        [  0.000000,  0.615661,   0.788010, -0.025062],  # +0.063mm
         [  0.000000,  0.000000,   0.000000,  1.000000]
     ], dtype=np.float64)
+    # END_EFFECTOR_TO_D405_MOUNT = np.array([
+    #     [  0.000000, -0.707107,   0.707107, -0.097522],  # -97.522mm
+    #     [  1.000000,  0.000000,   0.000000, -0.000063],  # -15.062mm
+    #     [  0.000000,  0.707107,   0.707107,  0.015062],  # +0.063mm
+    #     [  0.000000,  0.000000,   0.000000,  1.000000]
+    # ], dtype=np.float64)
 
     # Camera serial numbers
     FEMTO_BOLT_SERIAL = None  # Auto-detect
@@ -102,19 +108,20 @@ class Config:
 
     # Workspace bounds (measured from base frame origin)
     # Used for cropping Femto Bolt point cloud to relevant area
+    # Expanded bounds to include more of the workspace (with margin)
     WORKSPACE_BOUNDS = {
-        'x': [0.0, 0.8],    # +X: 0 to 80cm (forward)
-        'y': [-0.4, 0.3],   # Y: -40cm to +30cm (right to left)
-        'z': [-0.2, 0.5]     # +Z: 0 to 70cm (upward)
+        'x': [-0.0, 1.0],   # +X: -20cm to 100cm (forward, with margin)
+        'y': [-0.5, 0.5],   # Y: -50cm to +50cm (right to left, expanded)
+        'z': [-0.3, 0.8]    # +Z: -30cm to 80cm (upward, expanded for table+objects)
     }
 
     # Femto Bolt workspace bounds (in Femto optical frame)
     # Pre-calculated from WORKSPACE_BOUNDS for faster filtering
     # Filter BEFORE transformation to reduce computation
     FEMTO_WORKSPACE_BOUNDS = {
-        'x': [-0.304087, 0.418992],
-        'y': [-0.409096, 0.606593],
-        'z': [-0.933164, 0.049505]
+        'x': [-0.300000, 0.350000],
+        'y': [-0.300000, 0.700000],
+        'z': [ 0.280000, 0.700000]
     }
 
     # RISE workspace (for reference, deprecated)

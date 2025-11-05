@@ -40,7 +40,7 @@ class FemtoBoltCamera:
         self.frame_count = 0  # For debug output
         self.camera_param = None  # Store camera parameters
 
-    def start(self, depth_width=640, depth_height=576, color_width=1280, color_height=720, fps=30):
+    def start(self, depth_width=320, depth_height=288, color_width=1280, color_height=720, fps=30):
         """Start camera stream"""
         try:
             # Get depth profile
@@ -402,7 +402,7 @@ class D405Camera:
         self.serial = serial
         self.align = None
 
-    def start(self, width=640, height=480, fps=30):
+    def start(self, width=424, height=240, fps=30):
         """Start camera stream"""
         try:
             # Enable streams
